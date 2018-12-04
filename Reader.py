@@ -1,5 +1,4 @@
 import torch.utils.data as data
-from torch.utils.data.sampler import Sampler
 
 from PIL import Image
 from PIL import ImageFile
@@ -14,17 +13,31 @@ IMG_EXTENSIONS = [
     '.png', '.PNG', '.ppm', '.PPM', '.bmp', '.BMP',
 ]
 
-
 def is_image_file(filename):
     return any(filename.endswith(extension) for extension in IMG_EXTENSIONS)
 
-def make_dataset(dict_in):
-    images = []
-    for idx, path in dict_in.items():
-        if is_image_file(path) and os.path.exists(path):
-            images.append((path, idx))
-    return images
+def find_classes(data_dict):
+    classes = [c for c in sorted(data_dict)]
+    classes.sort()
+    class_to_idx = {classes[i]: i for i in range(len(classes))}
+    return classes, class_to_idx
 
+def make_dataset(dict, class_to_idx):
+    images = []
+    idx_to_class = {}
+    intervals = []
+    i0,i1 = 0,0
+    
+    for catg in sorted(dict):
+        for fdir in dict[catg]:
+            if is_image_file(fdir):
+                idx_to_class[i1] = class_to_idx[catg]
+                images.append((fdir, class_to_idx[catg]))
+                i1 += 1
+        intervals.append((i0,i1))
+        i0 = i1
+
+    return images, intervals, idx_to_class
 
 def pil_loader(path):
     # open path as file to avoid ResourceWarning (https://github.com/python-pillow/Pillow/issues/835)
@@ -50,24 +63,29 @@ def default_loader(path):
         return pil_loader(path)
 
 def label_transform():
-	pass
+    pass
+
+def folderReader(path):
+    pass
 
 class ImageReader(data.Dataset):
-    """A generic data loader where the images are arranged in this way: ::
-     Attributes:
-        classes (list): List of the class names.
-        class_to_idx (dict): Dict with items (class_name, class_index).
-        imgs (list): List of (image path, class_index) tuples
-    """
 
-    def __init__(self, data_dict, transform=None, loader=default_loader):
+    def __init__(self, data_dict, transform=None, target_transform=None,
+                 loader=default_loader):
         
-        imgs = make_dataset(data_dict)
+        classes, class_to_idx = find_classes(data_dict)
+        imgs, intervals, idx_to_class = make_dataset(data_dict, class_to_idx)
+        
         if len(imgs) == 0:
             raise(RuntimeError("Found 0 images!"))
 
         self.imgs = imgs
+        self.classes = classes
+        self.class_to_idx = class_to_idx# cat->1
+        self.intervals = intervals
+        self.idx_to_class = idx_to_class# i(img idx)->2(class)
         self.transform = transform
+        self.target_transform = target_transform
         self.loader = loader
 
     def __getitem__(self, index):
@@ -81,12 +99,10 @@ class ImageReader(data.Dataset):
         img = self.loader(path)
         if self.transform is not None:
             img = self.transform(img)
-            
+        if self.target_transform is not None:
+            target = self.target_transform(target)
+
         return img, target
 
     def __len__(self):
         return len(self.imgs)
-
-
-
-    

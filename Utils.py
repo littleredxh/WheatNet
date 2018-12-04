@@ -12,7 +12,8 @@ import torch
 import os,random
 
 from sklearn.preprocessing import normalize
-
+        
+        
 ######################################################################
 # combing two dictionary
 # ^^^^^^^^^^^^^^^^^^^^^^^

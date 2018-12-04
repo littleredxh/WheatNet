@@ -1,35 +1,26 @@
-from PIL import Image
-from PIL import ImageFile
-ImageFile.LOAD_TRUNCATED_IMAGES = True
+import os, time, copy, random
+from glob import glob
 
-import numpy as np
-from sklearn.preprocessing import normalize
-import glob, os, time, copy
-
-import torch
+from torchvision import models, transforms, datasets
 import torch.optim as optim
-import torch.nn as nn
 from torch.autograd import Variable
-from torchvision import datasets, transforms, models
+import torch.nn as nn
+import torch
 
-import KNet_utils as K
-from KNet import KNet, KLoss, KSampler
+import Utils as K
+from Net import KNet, KLoss
+from Reader import  ImageReader
+from Sampler import BalanceSampler
 
-PHASE = ['train', 'val']
+PHASE = ['tra', 'val']
 RGBmean, RGBstdv = [0.429, 0.495, 0.259], [0.218, 0.224, 0.171]  
 
-def normARG(minV, maxV, array):
-    N = array.shape[0]
-    min_num = array.min(0)
-    array = array-min_num
-    max_num = array.max(0)
-    return array/max_num*(maxV-minV)+minV
-
 class learn():
-    def __init__(self, src, dst, gpuid):
+    def __init__(self, src, dst, data_dict, gpuid=[0,1]):
         self.src = src
         self.dst = dst
         self.gpuid = gpuid
+        self.data_dict = data_dict
         
         if len(gpuid)>1: 
             self.mp = True
@@ -38,19 +29,22 @@ class learn():
 
         self.batch_size = 20
         self.num_workers = 20
+        
         self.init_lr = 0.01
-        self.lr_decay_epoch = 5
+        self.decay_time = [False,False]
+        self.decay_rate = 0.1
+        
         self.num_features = 11
         self.criterion = KLoss()
         self.record = {p:[] for p in PHASE}
         
         
-    def run(self):
+    def run(self,num_epochs):
         if not self.setsys(): return
+        self.num_epochs = num_epochs
         self.loadData()
         self.setModel()
         self.printInfo()
-        num_epochs=self.lr_decay_epoch*4
         self.train(num_epochs)
                                               
     def setsys(self):
@@ -61,49 +55,22 @@ class learn():
         return True   
     
     def loadData(self):
-        data_transforms = {'train': transforms.Compose([
-                                    transforms.Scale(size=224*4, interpolation=Image.BICUBIC),
-                                    transforms.RandomCrop(224*3),
-                                    transforms.RandomHorizontalFlip(),
-                                    transforms.ToTensor(),
-                                    transforms.Normalize(RGBmean, RGBstdv)]),
-                             'val': transforms.Compose([
-                                    transforms.Scale(size=224*4, interpolation=Image.BICUBIC),
-                                    transforms.CenterCrop(224*3),
-                                    transforms.ToTensor(),
-                                    transforms.Normalize(RGBmean, RGBstdv)])}
+        data_transforms = {'tra': transforms.Compose([
+                                  transforms.Scale(224*4),
+                                  transforms.RandomCrop(224*3),
+                                  transforms.RandomHorizontalFlip(),
+                                  transforms.ToTensor(),
+                                  transforms.Normalize(RGBmean, RGBstdv)]),
+                           'val': transforms.Compose([
+                                  transforms.Scale(224*4),
+                                  transforms.CenterCrop(224*3),
+                                  transforms.ToTensor(),
+                                  transforms.Normalize(RGBmean, RGBstdv)])}
         
-        self.dsets = {p: datasets.ImageFolder(os.path.join(self.src, p), data_transforms[p]) for p in PHASE}
-        self.class2indx = self.dsets['train'].class_to_idx
-        self.indx2class = {v: k for k,v in self.class2indx.items()}
-        self.class_size = {p: {k: 0 for k in self.class2indx} for p in PHASE }# number of images in each class
-        self.N_classes = len(self.class2indx)# total number of classes
-        self.bookmark = {p:[] for p in PHASE}# index bookmark
-        torch.save(self.indx2class, self.dst+'indx2class.pth')
+        self.dsets = ImageReader(self.data_dict['tra'], self.data_transforms) 
+        self.intervals = self.dsets.intervals
+        self.classSize = len(self.intervals)
         
-        # number of images in each class
-        for phase in PHASE:
-            for key in self.class2indx:
-                filelist = [f for f in glob.glob(self.src + phase + '/' + key + '/' + '*.JPG')]
-                self.class_size[phase][key] = len(filelist)
-
-        # index bookmark
-        for phase in PHASE:
-            sta,end = 0,0
-            for idx in sorted(self.indx2class):
-                classkey = self.indx2class[idx]
-                end += self.class_size[phase][classkey]
-                self.bookmark[phase].append((sta,end))
-                print('--')
-                print(idx)
-                print(self.dsets[phase][sta][1])
-                print(self.dsets[phase][end-1][1])
-                try:
-                    print(self.dsets[phase][end][1])
-                except:
-                    print('end')
-                sta += self.class_size[phase][classkey]
-        return
 
     def setModel(self):
         # create whole model
@@ -122,24 +89,22 @@ class learn():
             self.optimizer = optim.SGD(self.model.parameters(), lr=0.01, momentum=0.9)
         return
 
-    def printInfo(self):
-        print('\nimages size of each class\n'+'-'*50)
-        print(self.class_size)
-        print('\nclass to index\n'+'-'*50)
-        print(self.dsets['train'].class_to_idx)
-        print('\nbookmark\n'+'-'*50)
-        print(self.bookmark)
-        return
-
     def DataLoaders(self):
         self.sampler = {PHASE[0]:KSampler(self.bookmark[PHASE[0]]),PHASE[1]:KSampler(self.bookmark[PHASE[1]],balance=False)}
         self.dataLoader = {p: torch.utils.data.DataLoader(self.dsets[p], batch_size=self.batch_size, sampler=self.sampler[p], num_workers=self.num_workers, drop_last = True) for p in PHASE}
         return
     
     def lr_scheduler(self, epoch):
-        lr = self.init_lr * (0.2**(epoch // self.lr_decay_epoch))
-        if epoch % self.lr_decay_epoch == 0: print('LR is set to {}'.format(lr))
-        for param_group in self.optimizer.param_groups: param_group['lr'] = lr
+        if epoch>=0.6*self.num_epochs and not self.decay_time[0]: 
+            self.decay_time[0] = True
+            lr = self.init_lr*self.decay_rate
+            print('LR is set to {}'.format(lr))
+            for param_group in self.optimizer.param_groups: param_group['lr'] = lr
+        if epoch>=0.9*self.num_epochs and not self.decay_time[1]: 
+            self.decay_time[1] = True
+            lr = self.init_lr*self.decay_rate*self.decay_rate
+            print('LR is set to {}'.format(lr))
+            for param_group in self.optimizer.param_groups: param_group['lr'] = lr
         return
 
     def train(self, num_epochs):
@@ -148,17 +113,19 @@ class learn():
         self.best_tra = 0.0
         self.best_epoch = 0
         for epoch in range(num_epochs):
-            self.DataLoaders()
             print('Epoch {}/{} \n '.format(epoch, num_epochs - 1) + '-' * 40)
             
             for phase in PHASE:
                 # recording the result
-                accMat = np.zeros((self.N_classes,self.N_classes))
+                accMat = torch.zeros(self.N_classes,self.N_classes)
                 running_loss = 0.0
                 N_T, N_A = 0,0
                 
                 # Adjust the model for different phase
                 if phase == 'train':
+                    dataLoader = torch.utils.data.DataLoader(self.dsets, batch_size=self.batch_size, 
+                                                     sampler=BalanceSampler(self.intervals, GSize=1), num_workers=self.num_workers)
+                    
                     self.lr_scheduler(epoch)
                     if self.mp:
                         self.model.module.train(True)  # Set model to training mode
@@ -174,7 +141,10 @@ class learn():
                         elif epoch >= int(num_epochs*0.6) and epoch < int(num_epochs*0.8): self.model.R.d_rate(0.05)
                         elif epoch >= int(num_epochs*0.8): self.model.R.d_rate(0)
                         
-                if phase == 'val':
+                else:
+                    dataLoader = torch.utils.data.DataLoader(self.dsets, batch_size=self.batch_size, 
+                                                     shuffle=False, num_workers=self.num_workers)
+            
                     if self.mp:
                         self.model.module.train(False)  # Set model to evaluate mode
                         self.model.module.R.d_rate(0)
@@ -184,7 +154,7 @@ class learn():
                         self.model.R.d_rate(0)
 
                 # iterate batch
-                for data in self.dataLoader[phase]:
+                for data in dataLoader:
                     # get the inputs
                     inputs_bt, labels_bt = data #<class 'torch.FloatTensor'> <class 'torch.LongTensor'>
                     # zero the parameter gradients
@@ -209,9 +179,6 @@ class learn():
                     for i in range(len(labels_bt)): accMat[labels_bt[i],preds_bt[i]] += 1
                         
                 # record the performance
-                mat = normalize(accMat.astype(np.float64),axis=1,norm='l1')
-                K.matrixPlot(mat,self.dst + 'epoch/', phase + str(epoch))
-                
                 epoch_tra = np.trace(mat)
                 epoch_loss = running_loss / N_A
                 epoch_acc = N_T / N_A
@@ -221,14 +188,7 @@ class learn():
                 if type(epoch_loss) != float: epoch_loss = epoch_loss[0]
                 print('{:5}:\n Loss: {:.4f} Acc: {:.4f}'.format(phase, epoch_loss, epoch_acc))    
                 
-                
                 if phase == 'val':
-                    # calculate dynamic weight
-                    # maxV = (0.4*((num_epochs-epoch)/num_epochs)+1)
-                    # w = normARG(1, maxV, (2-mat.diagonal())).tolist()
-                    # self.criterion = KLoss(w)
-                    # print(["%.2f" % a for a in w])
-                    
                     # deep copy the model
                     if epoch_tra > self.best_tra and epoch > num_epochs/2:
                         self.best_tra = epoch_tra
@@ -241,11 +201,8 @@ class learn():
         print('Training complete in {:.0f}m {:.0f}s'.format(time_elapsed // 60, time_elapsed % 60))
         print('Best val Acc: {:4f} in epoch: {}'.format(self.best_tra,self.best_epoch))
         torch.save(self.record, self.dst + str(self.best_epoch) + 'record.pth')
-        K.recordPlot(self.record, self.dst)
         return
-    
-    def view(self):
-        K.folderViewL(self.src,self.dst+'montage/')
+
    
 
     

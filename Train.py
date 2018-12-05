@@ -12,6 +12,7 @@ from Net import KNet, KLoss
 from Reader import  ImageReader
 from Sampler import BalanceSampler
 import numpy as np
+from sklearn.preprocessing import normalize
 
 PHASE = ['tra', 'val']
 RGBmean, RGBstdv = [0.429, 0.495, 0.259], [0.218, 0.224, 0.171]  
@@ -161,7 +162,7 @@ class learn():
                     loss = self.criterion(outputs, labels_bt)
                     
                     # backward + optimize only if in training phase
-                    if phase == 'train': 
+                    if phase == 'tra': 
                         loss.backward()
                         self.optimizer.step()
                         
@@ -172,7 +173,10 @@ class learn():
                     for i in range(len(labels_bt)): accMat[labels_bt[i],preds_bt[i]] += 1
                         
                 # record the performance
-                epoch_tra = np.trace(accMat)
+                mat = normalize(accMat.astype(np.float64),axis=1,norm='l1')
+                K.matrixPlot(mat,self.dst + 'epoch/', phase + str(epoch))
+                
+                epoch_tra = np.trace(mat)
                 epoch_loss = running_loss / N_A
                 epoch_acc = N_T / N_A
                 

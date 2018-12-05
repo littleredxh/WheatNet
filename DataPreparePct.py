@@ -14,7 +14,8 @@ class csv2img:
         self.data_dict = {p:{x:[] for x in PCT} for p in PHASE}
         
     def run(self):
-        self.loadfile()# get self,dict
+        self.loadfile()
+        self.spPlots()
         self.report()
         return self.data_dict
 
@@ -33,6 +34,7 @@ class csv2img:
             print('Loading file: {}'.format(file))
             df = pd.read_csv(file)
             fileNames = pd.Series.to_dict(df['image_file_name'])  # dict type
+            filePlots = pd.Series.to_dict(df['plot_id'])          # dict type
             filePCThd = pd.Series.to_dict(df['PCTHEAD'])          # dict type
             fileCpose = pd.Series.to_dict(df['camera_sn'])        # dict type Camera #5: 0671720638(nadir)
             # transfer the dict
@@ -50,16 +52,15 @@ class csv2img:
     def spPlots(self):
         random.shuffle(self.plot)
         # print(self.plot)
-        learnSet = {'tra':self.plot[:-100], 'val':self.plot[-100:]}
+        plot_sep = {'tra':self.plot[:-100], 'val':self.plot[-100:]}
         for phase in PHASE:
-            for plot in learnSet[phase]:
+            for plot in plot_sep[phase]:
                 for pct in PCT:
-                    # if self.dict_sp[plot][pct] != None: ##
                     for img in self.plot2pct2dir[plot][pct]:
                         if os.path.isfile(img):
                             self.data_dict[phase][pct].append(img)
                         else:
-                            print('no file',end='\r')
+                            print('no file')
 
     def report(self):
         print('-'*100)
@@ -70,5 +71,5 @@ class csv2img:
         minnum = 200
         for phase in PHASE:
             for pct in PCT:
-                print('{}-{}: {}'.format(phase,pct,len(self.data_dict[phase][pct])))
+                print('{}-{:03}: {}'.format(phase,pct,len(self.data_dict[phase][pct])))
             

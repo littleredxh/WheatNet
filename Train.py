@@ -11,6 +11,7 @@ import Utils as K
 from Net import KNet, KLoss
 from Reader import  ImageReader
 from Sampler import BalanceSampler
+import numpy as np
 
 PHASE = ['tra', 'val']
 RGBmean, RGBstdv = [0.429, 0.495, 0.259], [0.218, 0.224, 0.171]  
@@ -44,7 +45,6 @@ class learn():
         self.num_epochs = num_epochs
         self.loadData()
         self.setModel()
-        self.printInfo()
         self.train(num_epochs)
                                               
     def setsys(self):
@@ -56,42 +56,36 @@ class learn():
     
     def loadData(self):
         data_transforms = {'tra': transforms.Compose([
-                                  transforms.Scale(224*4),
+                                  transforms.Resize(224*4),
                                   transforms.RandomCrop(224*3),
                                   transforms.RandomHorizontalFlip(),
                                   transforms.ToTensor(),
                                   transforms.Normalize(RGBmean, RGBstdv)]),
                            'val': transforms.Compose([
-                                  transforms.Scale(224*4),
+                                  transforms.Resize(224*4),
                                   transforms.CenterCrop(224*3),
                                   transforms.ToTensor(),
                                   transforms.Normalize(RGBmean, RGBstdv)])}
         
-        self.dsets = ImageReader(self.data_dict['tra'], self.data_transforms) 
-        self.intervals = self.dsets.intervals
+        self.dsets = {p:ImageReader(self.data_dict[p], data_transforms[p]) for p in PHASE} 
+        self.intervals = self.dsets['tra'].intervals
         self.classSize = len(self.intervals)
         
 
     def setModel(self):
         # create whole model
-        Kmodel = KNet(self.num_features,self.N_classes)
+        Kmodel = KNet(self.num_features,self.classSize)
         
         # parallel computing and opt setting
         if self.mp:
             print('Training on Multi-GPU')
             self.batch_size = self.batch_size*len(self.gpuid)
             self.model = torch.nn.DataParallel(Kmodel,device_ids=self.gpuid).cuda()#
-            print(self.model)
             self.optimizer = optim.SGD(self.model.module.parameters(), lr=0.01, momentum=0.9)
         else: 
             print('Training on Single-GPU')
             self.model = Kmodel.cuda()
             self.optimizer = optim.SGD(self.model.parameters(), lr=0.01, momentum=0.9)
-        return
-
-    def DataLoaders(self):
-        self.sampler = {PHASE[0]:KSampler(self.bookmark[PHASE[0]]),PHASE[1]:KSampler(self.bookmark[PHASE[1]],balance=False)}
-        self.dataLoader = {p: torch.utils.data.DataLoader(self.dsets[p], batch_size=self.batch_size, sampler=self.sampler[p], num_workers=self.num_workers, drop_last = True) for p in PHASE}
         return
     
     def lr_scheduler(self, epoch):
@@ -114,16 +108,15 @@ class learn():
         self.best_epoch = 0
         for epoch in range(num_epochs):
             print('Epoch {}/{} \n '.format(epoch, num_epochs - 1) + '-' * 40)
-            
             for phase in PHASE:
                 # recording the result
-                accMat = torch.zeros(self.N_classes,self.N_classes)
+                accMat = np.zeros((self.classSize,self.classSize))
                 running_loss = 0.0
                 N_T, N_A = 0,0
                 
                 # Adjust the model for different phase
-                if phase == 'train':
-                    dataLoader = torch.utils.data.DataLoader(self.dsets, batch_size=self.batch_size, 
+                if phase == 'tra':
+                    dataLoader = torch.utils.data.DataLoader(self.dsets['tra'], batch_size=self.batch_size, 
                                                      sampler=BalanceSampler(self.intervals, GSize=1), num_workers=self.num_workers)
                     
                     self.lr_scheduler(epoch)
@@ -179,7 +172,7 @@ class learn():
                     for i in range(len(labels_bt)): accMat[labels_bt[i],preds_bt[i]] += 1
                         
                 # record the performance
-                epoch_tra = np.trace(mat)
+                epoch_tra = np.trace(accMat)
                 epoch_loss = running_loss / N_A
                 epoch_acc = N_T / N_A
                 

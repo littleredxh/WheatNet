@@ -10,8 +10,10 @@ class BalanceSampler(Sampler):
         list_sp = []
         
         # find the max interval
-        interval_list = [np.arange(b[0],b[1]) for b in intervals]
+        interval_list = [torch.arange(b[0],b[1]).long() for b in intervals]
         len_max = max([b[1]-b[0] for b in intervals])
+        
+        if len_max>3000: len_max = 3000  
         
         # exact division
         if len_max%GSize != 0:
@@ -42,22 +44,21 @@ class BalanceSampler(Sampler):
 
 class BalanceSampler2(Sampler):
     def __init__(self, intervals, GSize=2):
-        
         class_len = len(intervals)
         list_sp = []
         
         # find the max interval
-        interval_list = [torch.arange(b[0],b[1]) for b in intervals]
+        interval_list = [torch.arange(b[0],b[1]).long() for b in intervals]
         len_max = max([b[1]-b[0] for b in intervals])
         
-        if len_max>999: len_max = 999    
+        if len_max>3000: len_max = 3000    
                 
         list_sp = []
         for l in interval_list:
             len_l = l.size(0)
             list_l = l.tolist()
             if len_l>len_max:
-                random.sample(list_l, len_max)
+                list_l = random.sample(list_l, len_max)
             # exact division
             if len_l%GSize!= 0:    
                 len_l = len_l+(GSize-len_l%GSize)

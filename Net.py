@@ -71,8 +71,9 @@ class ResNet(nn.Module):
         self.layer1 = self._make_layer(block,  64, layers[0])
         self.layer2 = self._make_layer(block, 128, layers[1], stride=2)
         self.layer3 = self._make_layer(block, 256, layers[2], stride=2)
+        self.layer4 = self._make_layer(block, 512, layers[2], stride=2)
 
-        self.avgpool = nn.AvgPool2d(14)#7)
+        self.avgpool = nn.AvgPool2d(7)
         
         self.drop_rate = 0
         self.drop_out = nn.Dropout(p=self.drop_rate)
@@ -102,6 +103,7 @@ class ResNet(nn.Module):
         self.layer1[0].d_rate(r)
         self.layer2[0].d_rate(r)
         self.layer3[0].d_rate(r)
+        self.layer4[0].d_rate(r)
         
     def forward(self, x):
         x = self.conv1(x)
@@ -114,6 +116,8 @@ class ResNet(nn.Module):
         x = self.layer2(x)
         x = self.drop_out(x)
         x = self.layer3(x)
+        x = self.drop_out(x)
+        x = self.layer4(x)
         
         x = self.avgpool(x)
         x = x.view(x.size(0), -1)
@@ -138,7 +142,7 @@ class VNetA(nn.Module):
     def __init__(self,F,C):
         super(VNetA, self).__init__()
         self.vote = nn.AvgPool2d((9,1))
-        self.classifier = nn.Linear(256, C)
+        self.classifier = nn.Linear(512, C)
         
     def forward(self, x):
         N = x.size(0)

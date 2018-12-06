@@ -32,12 +32,12 @@ class learn():
         self.batch_size = 20
         self.num_workers = 20
         
-        self.init_lr = 0.01
+        self.init_lr = 0.001
         self.decay_time = [False,False]
         self.decay_rate = 0.1
         
         self.num_features = 11
-        self.criterion = KLoss()
+        self.criterion = nn.CrossEntropyLoss()#KLoss()
         self.record = {p:[] for p in PHASE}
         
         
@@ -105,7 +105,7 @@ class learn():
     def train(self, num_epochs):
         # recording time and epoch acc and best result
         since = time.time()
-        self.best_tra = 0.0
+        self.best_acc = 0.0
         self.best_epoch = 0
         for epoch in range(num_epochs):
             print('Epoch {}/{} \n '.format(epoch, num_epochs - 1) + '-' * 40)
@@ -117,7 +117,7 @@ class learn():
                 
                 # Adjust the model for different phase
                 if phase == 'tra':
-                    dataLoader = torch.utils.data.DataLoader(self.dsets['tra'], batch_size=self.batch_size, 
+                    dataLoader = torch.utils.data.DataLoader(self.dsets[phase], batch_size=self.batch_size, 
                                                      sampler=BalanceSampler(self.intervals, GSize=1), num_workers=self.num_workers)
                     
                     self.lr_scheduler(epoch)
@@ -136,7 +136,7 @@ class learn():
                         elif epoch >= int(num_epochs*0.8): self.model.R.d_rate(0)
                         
                 else:
-                    dataLoader = torch.utils.data.DataLoader(self.dsets, batch_size=self.batch_size, 
+                    dataLoader = torch.utils.data.DataLoader(self.dsets[phase], batch_size=self.batch_size, 
                                                      shuffle=False, num_workers=self.num_workers)
             
                     if self.mp:
@@ -159,7 +159,7 @@ class learn():
                     preds_bt = preds_bt.cpu().view(-1)
 
                     # calsulate the loss
-                    loss = self.criterion(outputs, labels_bt)
+                    loss = self.criterion(outputs, Variable(labels_bt.cuda()))
                     
                     # backward + optimize only if in training phase
                     if phase == 'tra': 
@@ -176,9 +176,9 @@ class learn():
                 mat = normalize(accMat.astype(np.float64),axis=1,norm='l1')
                 K.matrixPlot(mat,self.dst + 'epoch/', phase + str(epoch))
                 
-                epoch_tra = np.trace(mat)
+                epoch_acc = np.trace(mat)
                 epoch_loss = running_loss / N_A
-                epoch_acc = N_T / N_A
+                # epoch_acc = N_T / N_A
                 
                 self.record[phase].append((epoch, epoch_loss, epoch_acc))
                 
@@ -187,8 +187,8 @@ class learn():
                 
                 if phase == 'val':
                     # deep copy the model
-                    if epoch_tra > self.best_tra and epoch > num_epochs/2:
-                        self.best_tra = epoch_tra
+                    if epoch_acc > self.best_acc:
+                        self.best_acc = epoch_acc
                         self.best_epoch = epoch
                         self.best_model = copy.deepcopy(self.model)
                         torch.save(self.best_model, self.dst + 'model.pth')
@@ -196,7 +196,7 @@ class learn():
         
         time_elapsed = time.time() - since
         print('Training complete in {:.0f}m {:.0f}s'.format(time_elapsed // 60, time_elapsed % 60))
-        print('Best val Acc: {:4f} in epoch: {}'.format(self.best_tra,self.best_epoch))
+        print('Best val Acc: {:4f} in epoch: {}'.format(self.best_acc,self.best_epoch))
         torch.save(self.record, self.dst + str(self.best_epoch) + 'record.pth')
         return
 

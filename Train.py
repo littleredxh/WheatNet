@@ -8,7 +8,7 @@ import torch.nn as nn
 import torch
 
 import Utils as K
-from Net import KNet, KLoss
+from Net import KNet
 from Reader import  ImageReader
 from Sampler import BalanceSampler
 import numpy as np
@@ -37,7 +37,7 @@ class learn():
         self.decay_rate = 0.1
         
         self.num_features = 11
-        self.criterion = nn.CrossEntropyLoss()#KLoss()
+        self.criterion = nn.CrossEntropyLoss()
         self.record = {p:[] for p in PHASE}
         
         
